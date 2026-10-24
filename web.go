@@ -46,11 +46,12 @@ main{padding:14px 16px 40px;max-width:1180px;margin:0 auto}
 .exit{border:1px solid var(--line);border-radius:6px;margin-bottom:8px;
   background:var(--panel);overflow:hidden}
 .exit>.row{display:grid;gap:6px 12px;align-items:center;padding:9px 12px;
-  grid-template-columns:14px minmax(132px,auto) 1fr auto auto auto;
-  grid-template-areas:"dot ip meta chips socks acts"}
+  grid-template-columns:14px minmax(132px,auto) 1fr auto auto auto auto;
+  grid-template-areas:"dot ip meta pure chips socks acts"}
 .exit .dot{grid-area:dot}
 .exit .ip{grid-area:ip}
 .exit .meta{grid-area:meta}
+.exit .pure{grid-area:pure}
 .exit .chips{grid-area:chips}
 .exit .socks{grid-area:socks}
 .exit .acts{grid-area:acts}
@@ -61,6 +62,15 @@ main{padding:14px 16px 40px;max-width:1180px;margin:0 auto}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 .ip{font-weight:600;font-variant-numeric:tabular-nums}
 .meta{color:var(--dim);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pure{border:1px solid var(--line);border-radius:3px;padding:1px 7px;font-size:11px;
+  color:var(--dim);cursor:pointer;background:#0e1116;font-variant-numeric:tabular-nums;
+  white-space:nowrap;justify-self:start}
+.pure:hover:not(:disabled){border-color:var(--accent);color:var(--text)}
+.pure b{font-weight:600}
+.pure.good b{color:var(--ok)}
+.pure.mid b{color:var(--warn)}
+.pure.bad b{color:var(--bad)}
+.pure.none{border-style:dashed}
 .chips{display:flex;gap:6px;flex-wrap:wrap}
 .chip{border:1px solid var(--line);border-radius:3px;padding:1px 7px;font-size:11px;
   color:var(--dim);cursor:pointer;background:#0e1116}
@@ -610,11 +620,24 @@ function renderExits(){
       ? '<div class="errline" title="' + esc(e.err) + '">' + esc(e.err) + '</div>' : '';
     // country 后端已经给成"国旗 中文"，再拼国家码就重复了
     const place = esc(e.country || e.region || '—');
+    // IPPure 检测徽标：来源·属性·系数，系数按风险分色；没查过给"检测"按钮
+    const p = e.pure;
+    let pure = '<span class="pure"></span>';
+    if(p && p.checked_at){
+      const cls = p.score <= 20 ? 'good' : p.score <= 60 ? 'mid' : 'bad';
+      pure = '<button class="pure ' + cls + '" data-pure="' + e.slot + '" title="IPPure 检测于 '
+        + esc(p.checked_at.slice(0, 16).replace('T', ' ')) + ' · 点击重查">'
+        + esc(p.source) + '·' + esc(p.attr) + '·<b>' + p.score + '</b></button>';
+    }else if(e.status === 'up'){
+      pure = '<button class="pure none" data-pure="' + e.slot
+        + '" title="查这个出口 IP 的来源/属性/IPPure 系数">检测</button>';
+    }
     return '<div class="exit">'
       + '<div class="row">'
       +   '<span class="dot ' + e.status + '" title="' + (STATUS[e.status] || e.status) + '"></span>'
       +   '<span class="ip">' + esc(label) + '</span>'
       +   '<span class="meta">' + place + ' · ' + esc(e.host) + '</span>'
+      +   pure
       +   '<span class="chips">' + chips + '</span>'
       +   '<span class="socks"><button data-cred="' + e.slot + '" title="SOCKS5 访问凭据">'
       +     ICON.lock + ':' + e.port + '</button></span>'
@@ -919,6 +942,16 @@ document.addEventListener('click', async e => {
     try{
       await api('/api/swap?slot=' + swap.dataset.swap, {method:'POST'});
       toast('正在换节点');
+    }catch(err){ toast(err.message, true); }
+    poll();
+    return;
+  }
+  const pure = e.target.closest('[data-pure]');
+  if(pure){
+    pure.disabled = true;
+    try{
+      await api('/api/pure/recheck?slot=' + pure.dataset.pure, {method:'POST'});
+      toast('IPPure 检测中');
     }catch(err){ toast(err.message, true); }
     poll();
     return;

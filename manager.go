@@ -243,6 +243,37 @@ func (m *Manager) tryNode(t *Tunnel) error {
 		return err
 	}
 	t.ExitIP = ip
+	// IPPure 检测是锦上添花，异步做，不拖慢隧道建立
+	go m.refreshPure(t)
+	return nil
+}
+
+// refreshPure 查这个出口的 IPPure 数据并落盘。
+// 失败只是界面上少三个标记，不影响隧道本身，记日志即可。
+func (m *Manager) refreshPure(t *Tunnel) {
+	info, err := t.probeIPPure()
+	if err != nil {
+		log.Printf("出口 %d 查 IPPure 失败: %v", t.Slot, err)
+		return
+	}
+	t.setPure(info)
+	if err := m.saveState(); err != nil {
+		log.Printf("保存状态失败: %v", err)
+	}
+}
+
+// RecheckPure 手动重查一条出口的 IPPure 数据（界面按钮触发），异步执行。
+func (m *Manager) RecheckPure(slot int) error {
+	m.mu.RLock()
+	t, ok := m.tunnels[slot]
+	m.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("出口 %d 不存在", slot)
+	}
+	if t.Status != "up" {
+		return fmt.Errorf("出口不在运行中")
+	}
+	go m.refreshPure(t)
 	return nil
 }
 

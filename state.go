@@ -6,8 +6,13 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
+
+// saveMu 串行化 state.json 的写入：健康检查、IPPure 检测等后台任务
+// 都会触发 saveState，tmp 文件路径共享，并发写会互相截断。
+var saveMu sync.Mutex
 
 // persistedTunnel 是隧道在磁盘上的形态。
 // 只存重建所需的信息，运行态（netns、进程、监听）重启后重新建立。
@@ -24,6 +29,8 @@ type persistedTunnel struct {
 	// PrevHost 非空表示上次换节点只做了一半：隧道已经指向新节点，
 	// 但入站还绑在这个旧节点上。恢复时照着它把入站接回来。
 	PrevHost string `json:"prev_host,omitempty"`
+	// Pure 是出口 IP 的 IPPure 检测结果
+	Pure PureInfo `json:"pure,omitempty"`
 }
 
 type persistedState struct {
@@ -111,6 +118,7 @@ func (m *Manager) saveState() error {
 			SocksUser:   t.Cred.User,
 			SocksPass:   t.Cred.Pass,
 			PrevHost:    t.prevHostOf(),
+			Pure:        t.PureOf(),
 		})
 	}
 
@@ -118,6 +126,10 @@ func (m *Manager) saveState() error {
 	if err != nil {
 		return err
 	}
+	// IPPure 检测等后台任务也会触发保存，tmp 文件是共享路径，
+	// 不串行化会互相截断
+	saveMu.Lock()
+	defer saveMu.Unlock()
 	tmp := statePath(m.workDir) + ".tmp"
 	if err := os.WriteFile(tmp, blob, 0600); err != nil {
 		return err
@@ -174,6 +186,7 @@ func (m *Manager) restoreState() (int, error) {
 			Node:   node,
 			Status: "starting",
 			Cred:   cred,
+			Pure:   p.Pure,
 		}
 		t.setPrevHost(p.PrevHost)
 		m.mu.Lock()

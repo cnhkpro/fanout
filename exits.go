@@ -30,6 +30,7 @@ type Exit struct {
 	// SOCKS5 凭据：界面要能看、能复制、能改
 	SocksUser string        `json:"socks_user"`
 	SocksPass string        `json:"socks_pass"`
+	Pure      PureInfo      `json:"pure,omitempty"`
 	Inbounds  []ExitInbound `json:"inbounds"`
 }
 
@@ -111,6 +112,7 @@ func (m *Manager) ExitsOf() ExitsView {
 			Region: t.Node.CountryCode, Country: nodeLabel(t.Node),
 			ExitIP: t.ExitIP, Status: t.Status, Err: t.Err, Since: t.Since,
 			SocksUser: cred.User, SocksPass: cred.Pass,
+			Pure: t.PureOf(),
 		})
 	}
 

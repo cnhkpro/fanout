@@ -131,6 +131,7 @@ func main() {
 	mux.HandleFunc("/api/start", apiStart(mgr))
 	mux.HandleFunc("/api/stop", apiStop(mgr))
 	mux.HandleFunc("/api/swap", apiSwap(mgr))
+	mux.HandleFunc("/api/pure/recheck", apiPureRecheck(mgr))
 	mux.HandleFunc("/api/cred", apiCred(mgr))
 	mux.HandleFunc("/api/refresh", apiRefresh(mgr))
 	mux.HandleFunc("/api/regions", apiRegions(mgr))
@@ -235,6 +236,23 @@ func apiNodes(m *Manager) http.HandlerFunc {
 func apiTunnels(m *Manager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, m.Tunnels())
+	}
+}
+
+// apiPureRecheck 手动重查一条出口的 IPPure 数据。检测是异步的，
+// 前端轮询 /api/exits 拿结果。
+func apiPureRecheck(m *Manager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		slot, err := strconv.Atoi(r.URL.Query().Get("slot"))
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "缺少 slot 参数"})
+			return
+		}
+		if err := m.RecheckPure(slot); err != nil {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"ok": "检测中"})
 	}
 }
 

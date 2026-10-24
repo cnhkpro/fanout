@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -30,6 +31,8 @@ type Tunnel struct {
 	Err    string    `json:"err,omitempty"`
 	Since  time.Time `json:"since"`
 	Cred   SocksCred `json:"cred"`
+	// Pure 是出口 IP 的 IPPure 检测结果，随状态一起落盘
+	Pure PureInfo `json:"pure"`
 
 	ns       string
 	listener net.Listener
@@ -338,6 +341,62 @@ func (t *Tunnel) probeExitIP() (string, error) {
 		return "", fmt.Errorf("出口 IP 返回异常: %q", ip)
 	}
 	return ip, nil
+}
+
+// PureInfo 是这个出口 IP 在 IPPure 的检测结果。
+type PureInfo struct {
+	Source    string    `json:"source,omitempty"` // 原生 | 广播
+	Attr      string    `json:"attr,omitempty"`   // 住宅 | 机房
+	Score     int       `json:"score"`            // IPPure 风险系数
+	CheckedAt time.Time `json:"checked_at,omitempty"`
+}
+
+// probeIPPure 通过隧道查询出口 IP 在 IPPure 的检测数据。
+//
+// 请求必须从隧道自己的 netns 发出：my.ippure.com/v1/info 检测的是
+// 来访 IP 本身，不支持传参查别的 IP，从母机发只会查到母机自己。
+// 官方注明接口在测试阶段可能变动，解析做了容错。
+func (t *Tunnel) probeIPPure() (PureInfo, error) {
+	out, err := cmdOutput(exec.Command("ip", "netns", "exec", t.nsName(),
+		"curl", "-s", "--max-time", "15", "https://my.ippure.com/v1/info"))
+	if err != nil {
+		return PureInfo{}, fmt.Errorf("查询 IPPure 失败: %w", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return PureInfo{}, fmt.Errorf("解析 IPPure 返回失败: %w", err)
+	}
+	score, ok := raw["fraudScore"].(float64)
+	if !ok {
+		return PureInfo{}, fmt.Errorf("IPPure 返回格式变化，缺少 fraudScore: %s",
+			strings.TrimSpace(string(out)))
+	}
+	info := PureInfo{Score: int(score), CheckedAt: time.Now()}
+	if b, _ := raw["isBroadcast"].(bool); b {
+		info.Source = "广播"
+	} else {
+		info.Source = "原生"
+	}
+	if r, _ := raw["isResidential"].(bool); r {
+		info.Attr = "住宅"
+	} else {
+		info.Attr = "机房"
+	}
+	return info, nil
+}
+
+// setPure 记下这条出口最新的 IPPure 检测结果。
+func (t *Tunnel) setPure(p PureInfo) {
+	t.mu.Lock()
+	t.Pure = p
+	t.mu.Unlock()
+}
+
+// PureOf 读这条出口的 IPPure 检测结果。CheckedAt 为零表示还没查过。
+func (t *Tunnel) PureOf() PureInfo {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.Pure
 }
 
 // stop 停止这条隧道并清理它占用的所有资源。
