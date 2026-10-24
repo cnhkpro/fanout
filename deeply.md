@@ -134,7 +134,40 @@ f restart        # 重启
 systemctl status fanout
 ```
 
-**更新自己改过的版本**（路径 C 的日常流程）：
+### 发版与更新（推荐流程）
+
+改完代码后走 release 发版，服务器上 `f update` 一键升级：
+
+```bash
+# 本地：提交推送
+git add -A && git commit -m "改动说明" && git push
+
+# 打标签触发自动编译（版本号递增）
+git tag v0.1.4 && git push origin v0.1.4
+```
+
+tag 推送后 GitHub Actions 自动编译 amd64/arm64 并发 Release，**约 2~3 分钟**。
+
+**关键：等 release 就绪后再更新**，否则 `f update` 拉到的还是旧版
+（表现为"当前 v0.1.2 → 已更新到 v0.1.2"，原地踏步）。先验证：
+
+```bash
+curl -sI https://github.com/cnhkpro/fanout/releases/latest/download/fanout-linux-amd64.tar.gz | grep -i location
+```
+
+返回的重定向地址里带新版本号（如 `v0.1.4`）就是就绪了，然后服务器上：
+
+```bash
+f update      # 显示"已更新到 fanout v0.1.4"才算成功
+f restart     # 让运行中的隧道用上新代码
+```
+
+Actions 页可看编译进度：`github.com/cnhkpro/fanout/actions`
+（fork 仓库首次使用要去 Settings → Actions 启用）。
+
+### 备用：不走 release 直接替换二进制
+
+适合 Actions 不可用或临时验证（需要本地有 Go）：
 
 ```bash
 # 本地
