@@ -5,7 +5,7 @@ set -uo pipefail
 WORK_DIR=/var/lib/fanout
 SERVICE=fanout
 BIN=/usr/local/bin/fanout
-REPO="${REPO:-byJoey/fanout}"
+REPO="${REPO:-cnhkpro/fanout}"
 
 G='\033[0;32m'; R='\033[0;31m'; Y='\033[0;33m'; B='\033[0;36m'; D='\033[2m'; N='\033[0m'
 
@@ -199,8 +199,17 @@ reset_basepath() {
   if [[ -z $bp ]]; then
     rm -f "$WORK_DIR/basepath"
     svc_restart
-    sleep 2
+    # 等 fanout 启动并把新路径写出来，而不是睡死 2 秒：
+    # 服务没写完之前读出来是空，提示给用户的地址就是错的
+    for _ in $(seq 1 30); do
+      [[ -s "$WORK_DIR/basepath" ]] && break
+      sleep 1
+    done
     bp=$(cat "$WORK_DIR/basepath" 2>/dev/null)
+    if [[ -z $bp ]]; then
+      echo -e "  ${R}服务似乎没起来，用 f log 看日志确认${N}"
+      return
+    fi
   else
     bp=${bp#/}; bp=${bp%/}
     umask 077
@@ -252,7 +261,7 @@ show_links() {
   echo -e "  交流群  ${B}https://t.me/+ft-zI76oovgwNmRh${N}"
   echo -e "  油管    ${B}https://youtube.com/@joeyblog${N}"
   echo -e "  博客    ${B}https://joeyblog.net${N}"
-  echo -e "  项目    ${B}https://github.com/byJoey/fanout${N}"
+  echo -e "  项目    ${B}https://github.com/cnhkpro/fanout${N}"
   echo
   echo -e "  ${D}用着有问题、或者想要什么功能，去群里说或提 issue。${N}"
 }

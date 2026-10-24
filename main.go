@@ -80,21 +80,36 @@ func main() {
 	}
 
 	mgr := NewManager(*maxSlots, *workDir)
-	log.Printf("正在拉取节点列表...")
-	if n, err := mgr.RefreshNodes(); err != nil {
-		log.Printf("拉取失败（可在 Web 界面重试）: %v", err)
-	} else {
-		log.Printf("已获取 %d 个节点", n)
+
+	// 先读上次缓存的节点池：vpngate 暂时拉不到时，界面立刻有候选可用
+	if n, err := mgr.loadNodesCache(); err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("读取节点缓存失败: %v", err)
+		}
+	} else if n > 0 {
+		log.Printf("已载入上次缓存的 %d 个节点", n)
 	}
 
-	if n, err := mgr.restoreState(); err != nil {
-		log.Printf("恢复上次状态失败: %v", err)
-	} else if n > 0 {
-		log.Printf("正在恢复上次的 %d 条隧道", n)
-		// 3x-ui 模式重启不会自动重写面板出站，旧版本升上来时面板里的 socks
-		// 出站没有认证字段，端口一旦要认证就连不上，这里恢复后对账一次
-		go mgr.ReconcileOutbounds()
-	}
+	// 拉节点列表最坏要等两轮 60s 超时，同步做会把 Web 监听拖到一两分钟后才起，
+	// 重启期间浏览器完全没响应。放后台做，界面先开起来；
+	// 节点还没拉完时界面显示空列表，用户可以在界面里重试。
+	go func() {
+		log.Printf("正在拉取节点列表...")
+		if n, err := mgr.RefreshNodes(); err != nil {
+			log.Printf("拉取失败（可在 Web 界面重试）: %v", err)
+		} else {
+			log.Printf("已获取 %d 个节点", n)
+		}
+
+		if n, err := mgr.restoreState(); err != nil {
+			log.Printf("恢复上次状态失败: %v", err)
+		} else if n > 0 {
+			log.Printf("正在恢复上次的 %d 条隧道", n)
+			// 3x-ui 模式重启不会自动重写面板出站，旧版本升上来时面板里的 socks
+			// 出站没有认证字段，端口一旦要认证就连不上，这里恢复后对账一次
+			go mgr.ReconcileOutbounds()
+		}
+	}()
 
 	go mgr.WatchHealth()
 

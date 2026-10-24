@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // persistedTunnel 是隧道在磁盘上的形态。
@@ -30,6 +31,66 @@ type persistedState struct {
 }
 
 func statePath(dir string) string { return filepath.Join(dir, "state.json") }
+
+// nodeOnDisk 是节点落盘的形态。Node.Config 的 json tag 是 "-"，
+// 为的是不把几百份 ovpn 配置塞进 /api/nodes 的响应；
+// 但缓存必须带配置，否则缓存节点没法重建隧道。
+type nodeOnDisk struct {
+	Node
+	Config string `json:"config"`
+}
+
+// persistedNodes 是节点池在磁盘上的形态。
+// SavedAt 记列表的真实更新时间，界面据此能看出池子是不是陈的。
+type persistedNodes struct {
+	SavedAt time.Time    `json:"saved_at"`
+	Nodes   []nodeOnDisk `json:"nodes"`
+}
+
+func nodesPath(dir string) string { return filepath.Join(dir, "nodes.json") }
+
+// saveNodesCache 把当前节点池写盘。vpngate.net 宕机时靠这份缓存继续提供候选。
+func (m *Manager) saveNodesCache() error {
+	m.mu.RLock()
+	pn := persistedNodes{SavedAt: m.fetched}
+	for _, n := range m.nodes {
+		pn.Nodes = append(pn.Nodes, nodeOnDisk{Node: n, Config: n.Config})
+	}
+	m.mu.RUnlock()
+
+	blob, err := json.Marshal(pn)
+	if err != nil {
+		return err
+	}
+	tmp := nodesPath(m.workDir) + ".tmp"
+	if err := os.WriteFile(tmp, blob, 0600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, nodesPath(m.workDir))
+}
+
+// loadNodesCache 读回上次缓存的节点池，返回条数。文件不存在返回 os.IsNotExist 错误。
+func (m *Manager) loadNodesCache() (int, error) {
+	blob, err := os.ReadFile(nodesPath(m.workDir))
+	if err != nil {
+		return 0, err
+	}
+	var pn persistedNodes
+	if err := json.Unmarshal(blob, &pn); err != nil {
+		return 0, fmt.Errorf("解析节点缓存失败: %w", err)
+	}
+	nodes := make([]Node, 0, len(pn.Nodes))
+	for _, item := range pn.Nodes {
+		n := item.Node
+		n.Config = item.Config
+		nodes = append(nodes, n)
+	}
+	m.mu.Lock()
+	m.nodes = nodes
+	m.fetched = pn.SavedAt
+	m.mu.Unlock()
+	return len(nodes), nil
+}
 
 // saveState 把当前隧道写入磁盘，供重启后恢复。
 func (m *Manager) saveState() error {
@@ -82,7 +143,8 @@ func (m *Manager) restoreState() (int, error) {
 
 	// 从当前节点列表补回地区、延迟等元数据；节点已下线时退回存盘的最小信息
 	known := map[string]Node{}
-	for _, n := range m.nodes {
+	nodes, _ := m.Nodes()
+	for _, n := range nodes {
 		known[n.HostName] = n
 	}
 

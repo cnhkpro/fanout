@@ -29,15 +29,24 @@ func NewManager(maxSlots int, workDir string) *Manager {
 }
 
 // RefreshNodes 重新拉取节点列表。
+// 拉取失败时保留现有节点池：vpngate 宕机不该清空候选，
+// 旧池子虽然会随时间老化，但配合候选轮换仍能提供新出口。
 func (m *Manager) RefreshNodes() (int, error) {
 	nodes, err := fetchNodes(60 * time.Second)
 	if err != nil {
+		if cur, fetched := m.Nodes(); len(cur) > 0 {
+			log.Printf("拉取失败，沿用现有节点池（%d 个，更新于 %s）",
+				len(cur), fetched.Format("2006-01-02 15:04"))
+		}
 		return 0, err
 	}
 	m.mu.Lock()
 	m.nodes = nodes
 	m.fetched = time.Now()
 	m.mu.Unlock()
+	if err := m.saveNodesCache(); err != nil {
+		log.Printf("缓存节点列表失败: %v", err)
+	}
 	return len(nodes), nil
 }
 
